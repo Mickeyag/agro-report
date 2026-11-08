@@ -1,26 +1,27 @@
-AGRO REPORT — אפליקציית דוח פיקוח (PWA)
-=========================================
+AGRO REPORT — דוח פיקוח (אתר + אפליקציית אנדרואיד)
+====================================================
 
-מבנה התיקייה
-- index.html, app.js           — האפליקציה
-- projects.js                  — רשימת הפרויקטים והעצים (נוצר מהאקסל, לא לערוך ידנית)
-- update_projects.py           — ממיר את האקסל ל-projects.js
-- sw.js, manifest.webmanifest  — מאפשרים התקנה בטלפון ועבודה בלי קליטה
-- lib/, icons/                 — ספריות, לוגו ואייקונים
+כתובת האתר:      https://mickeyag.github.io/agro-report/
+הורדת האפליקציה:  https://github.com/Mickeyag/agro-report/releases/latest/download/agro-report.apk
+
+מה יש בתיקייה
+- index.html, app.js, sw.js, manifest.webmanifest, lib/, icons/  — האפליקציה עצמה
+- projects.js            — רשימת הפרויקטים והעצים (נוצר מהאקסל — לא לערוך ידנית)
+- update_projects.py     — ממיר את האקסל ל-projects.js
+- package.json, capacitor.config.json, scripts/, assets/, .github/  — בניית אפליקציית האנדרואיד
+- .nojekyll              — קובץ ריק, נדרש ל-GitHub Pages
+
+בניית האפליקציה
+כל העלאה ל-GitHub בונה אוטומטית APK חדש (לשונית Actions, כ-5 דקות).
+הקובץ מתפרסם ב-Releases ובקישור ההורדה שלמעלה.
 
 עדכון רשימת הפרויקטים
-1. מעדכנים את "עצים מיוחדים לשימור והעתקה.xlsx" (גיליון לכל פרויקט: עמודה A מספר עץ, עמודה B שימור/העתקה).
-2. מריצים:  python update_projects.py "..\עצים מיוחדים לשימור והעתקה.xlsx"
-3. ב-sw.js מעלים את מספר הגרסה (VERSION) ומעלים מחדש את הקבצים לאתר.
+1. מעדכנים את האקסל ומריצים:  python update_projects.py "..\עצים מיוחדים לשימור והעתקה.xlsx"
+2. מעלים ל-GitHub את projects.js.
+האפליקציה בטלפון מורידה את הרשימה החדשה לבד בפעם הבאה שהיא נפתחת עם אינטרנט — אין צורך להתקין מחדש.
 
-העלאה ל-GitHub Pages (פעם אחת)
-1. יוצרים חשבון ב-github.com ומאגר (repository) חדש, למשל agro-report.
-2. Add file > Upload files: גוררים את כל תוכן התיקייה (כולל lib ו-icons).
-3. Settings > Pages > Branch: main > Save.
-4. אחרי כדקה האפליקציה זמינה בכתובת https://<שם-משתמש>.github.io/agro-report/
-
-התקנה בטלפון
-- אנדרואיד (Chrome): פותחים את הכתובת > הגדרות באפליקציה > "התקן כאפליקציה", או תפריט ⋮ > "הוספה למסך הבית".
-- אייפון (Safari): פותחים את הכתובת > כפתור השיתוף > "הוסף למסך הבית".
-
-ניסיון מהמחשב: לפתוח את index.html ישירות בדפדפן עובד, אבל התקנה ועבודה בלי קליטה דורשות את הכתובת באינטרנט.
+מפתח החתימה (KEYSTORE_BASE64.txt, agro-report.keystore)
+- לא להעלות ל-GitHub! לשמור במקום בטוח.
+- התוכן של KEYSTORE_BASE64.txt מודבק פעם אחת ב-GitHub:
+  Settings > Secrets and variables > Actions > New repository secret, שם: KEYSTORE_BASE64
+- בלי המפתח הזה, גרסה חדשה לא תותקן מעל הישנה (יהיה צורך להסיר ולהתקין מחדש, והטיוטה תימחק).

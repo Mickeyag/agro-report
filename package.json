@@ -1,0 +1,20 @@
+{
+  "name": "agro-report",
+  "version": "2.1.1",
+  "private": true,
+  "description": "AGRO REPORT — אפליקציית דוח פיקוח עצים (אתר + אפליקציית אנדרואיד)",
+  "scripts": {
+    "www": "node scripts/prepare-www.js"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.0",
+    "@capacitor/camera": "8.2.6",
+    "@capacitor/core": "8.6.0",
+    "@capacitor/filesystem": "8.1.5",
+    "@capacitor/share": "8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "4.0.0",
+    "@capacitor/cli": "8.6.0"
+  }
+}

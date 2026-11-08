@@ -1,6 +1,6 @@
 // Service worker — makes the app work offline.
 // After changing any file (e.g. a new projects.js), bump VERSION so phones pick up the update.
-var VERSION = 'agro-v2.0.0-1';
+var VERSION = 'agro-v2.1.1-1';
 var FILES = [
   './', './index.html', './app.js', './projects.js',
   './lib/docx.js', './lib/jszip.js', './lib/logo.js',

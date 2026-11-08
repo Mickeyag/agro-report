@@ -1,0 +1,8 @@
+{
+  "appId": "il.agroreport.app",
+  "appName": "דוח פיקוח",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}

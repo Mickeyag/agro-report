@@ -1,7 +1,7 @@
 // ═════════════════════════════════════════
 // AGRO REPORT — אפליקציית דוח פיקוח
 // ═════════════════════════════════════════
-var APP_VERSION = '2.0.0';
+var APP_VERSION = '2.1.1';
 
 // ─────────────────────────────────────────
 // STATE
@@ -15,6 +15,69 @@ var deferredInstall = null;
 
 var IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+// ─────────────────────────────────────────
+// NATIVE (Android app built with Capacitor) — falls back to web when absent
+// ─────────────────────────────────────────
+var IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+var PROJECTS_URL = 'https://mickeyag.github.io/agro-report/projects.js';
+function nativePlugin(name) {
+  if (!IS_NATIVE) return null;
+  var C = window.Capacitor;
+  if (C.Plugins && C.Plugins[name]) return C.Plugins[name];
+  return C.registerPlugin ? C.registerPlugin(name) : null;
+}
+var NCamera = nativePlugin('Camera'), NShare = nativePlugin('Share'), NFs = nativePlugin('Filesystem');
+
+function blobToBase64(blob) {
+  return new Promise(function (res, rej) {
+    var r = new FileReader();
+    r.onload = function () { res(String(r.result).split(',')[1]); };
+    r.onerror = function () { rej(r.error); };
+    r.readAsDataURL(blob);
+  });
+}
+// Writes a blob to the app cache and returns its file:// uri (for the native share sheet)
+function nativeCacheFile(blob, name) {
+  return blobToBase64(blob).then(function (b64) {
+    return NFs.writeFile({ path: 'share/' + name, data: b64, directory: 'CACHE', recursive: true });
+  }).then(function (r) { return r.uri; });
+}
+
+// Latest project list from the website (so a new project doesn't need a new app install)
+function parseProjectsJs(text) {
+  var s = text.indexOf('['), e = text.lastIndexOf(']');
+  if (s < 0 || e < s) return null;
+  var arr = JSON.parse(text.slice(s, e + 1));
+  return Array.isArray(arr) && arr.length ? arr : null;
+}
+function loadCachedProjects() {
+  try {
+    var c = JSON.parse(lsGet('projects_cache', 'null'));
+    if (Array.isArray(c) && c.length) PROJECTS = c;
+  } catch (e) {}
+}
+function refreshProjectsFromWeb() {
+  if (!IS_NATIVE || !window.fetch) return;
+  fetch(PROJECTS_URL + '?t=' + Date.now(), { cache: 'no-store' })
+    .then(function (r) { return r.ok ? r.text() : null; })
+    .then(function (t) {
+      var arr = t && parseProjectsJs(t);
+      if (!arr) return;
+      if (JSON.stringify(arr) === JSON.stringify(PROJECTS)) return;
+      PROJECTS = arr;
+      lsSet('projects_cache', JSON.stringify(arr));
+      var cur = $('f_project').value;
+      var sel = $('f_projectSel');
+      while (sel.options.length > 1) sel.remove(1);
+      buildProjectSelect(true);
+      $('f_project').value = cur;
+      syncProjectSelFromText();
+      renderProjectTrees();
+      trees.forEach(updateTreeStatusBadge);
+      showToast('🔄 רשימת הפרויקטים עודכנה');
+    }).catch(function () {});
+}
 
 var SUBTITLE_MAP = [
   'שלב 1 מתוך 4 — פרטי הסיור',
@@ -74,9 +137,17 @@ function init() {
   var autoDefault = IS_IOS ? '0' : '1';
   $('s_autoSave').checked = lsGet('autoSavePhone', autoDefault) === '1';
   if (IS_IOS) { $('autoSaveRow').style.display = 'none'; $('iosHint').style.display = 'block'; }
-  $('appVersion').textContent = APP_VERSION;
+  if (IS_NATIVE) {
+    $('autoSaveRow').style.display = 'none';
+    $('iosHint').style.display = 'none';
+    $('nativeHint').style.display = 'block';
+    $('viewerSave').style.display = 'none';   // camera photos are already in the gallery
+  }
+  $('appVersion').textContent = APP_VERSION + (IS_NATIVE ? ' (אפליקציה)' : ' (אתר)');
 
+  if (IS_NATIVE) loadCachedProjects();
   buildProjectSelect();
+  refreshProjectsFromWeb();
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
@@ -104,7 +175,7 @@ function init() {
 // ─────────────────────────────────────────
 // PROJECTS (from projects.js generated from Excel)
 // ─────────────────────────────────────────
-function buildProjectSelect() {
+function buildProjectSelect(isRebuild) {
   var sel = $('f_projectSel');
   var list = (typeof PROJECTS !== 'undefined' ? PROJECTS : []).slice()
     .sort(function (a, b) { return a.name.localeCompare(b.name, 'he'); });
@@ -118,7 +189,7 @@ function buildProjectSelect() {
   other.value = '__other';
   other.textContent = 'פרויקט אחר (הקלדה חופשית)';
   sel.appendChild(other);
-  sel.addEventListener('change', onProjectSelChange);
+  if (!isRebuild) sel.addEventListener('change', onProjectSelChange);
 }
 
 function onProjectSelChange() {
@@ -168,8 +239,6 @@ function statusClass(s) { return s === 'שימור' ? 'st-keep' : (s === 'העת
 function renderProjectTrees() {
   var box = $('projectTrees');
   var p = currentProject();
-  var dl = $('treeNumbersList');
-  dl.innerHTML = '';
   if (!p) {
     box.innerHTML = '';
     var em = document.createElement('div');
@@ -180,12 +249,6 @@ function renderProjectTrees() {
     box.appendChild(em);
     return;
   }
-  p.trees.forEach(function (t) {
-    var o = document.createElement('option');
-    o.value = t.n; o.label = t.s;
-    dl.appendChild(o);
-  });
-
   var documented = {};
   trees.forEach(function (t) { if (t.number) documented[normNum(t.number)] = true; });
   var q = normNum($('ptSearch') ? $('ptSearch').value : '');
@@ -261,7 +324,7 @@ function goToTab(idx) {
   }
   $('appSubtitle').textContent = SUBTITLE_MAP[idx];
   if (idx === 1) renderProjectTrees();
-  if (idx === 3) { buildSummary(); renderShareSection(); }
+  if (idx === 3) buildSummary();
   window.scrollTo(0, 0);
 }
 
@@ -310,7 +373,7 @@ function renderTree(tree) {
   body.className = 'tree-body';
   body.appendChild(makeFieldWithValue('עץ מספר', 'text', 'מספר העץ', tree.number, function (v) {
     tree.number = v; updateTreeStatusBadge(tree); renderProjectTrees(); scheduleSave();
-  }, 'treeNumbersList'));
+  }));
   body.appendChild(makeFieldWithValue('סוג עץ', 'text', 'סוג העץ', tree.type, function (v) { tree.type = v; scheduleSave(); }));
   body.appendChild(makeFieldWithValue('הערה לעץ', 'textarea', 'הערה ספציפית לעץ...', tree.note, function (v) { tree.note = v; scheduleSave(); }));
 
@@ -347,15 +410,15 @@ function makePhotoButtons(owner) {
   gal.addEventListener('change', function (e) { handlePhotos(e, owner, false); });
   var camBtn = document.createElement('button');
   camBtn.className = 'btn btn-outline'; camBtn.textContent = '📷 צלם';
-  camBtn.addEventListener('click', function () { cam.click(); });
+  camBtn.addEventListener('click', function () { if (IS_NATIVE) nativeTakePhoto(owner); else cam.click(); });
   var galBtn = document.createElement('button');
   galBtn.className = 'btn btn-outline'; galBtn.textContent = '🖼 גלריה';
-  galBtn.addEventListener('click', function () { gal.click(); });
+  galBtn.addEventListener('click', function () { if (IS_NATIVE) nativePickPhotos(owner); else gal.click(); });
   wrap.appendChild(camBtn); wrap.appendChild(galBtn); wrap.appendChild(cam); wrap.appendChild(gal);
   return wrap;
 }
 
-function makeFieldWithValue(labelText, inputType, placeholder, value, onChange, listId) {
+function makeFieldWithValue(labelText, inputType, placeholder, value, onChange) {
   var wrapper = document.createElement('div');
   wrapper.className = 'field';
   var lbl = document.createElement('label');
@@ -364,7 +427,7 @@ function makeFieldWithValue(labelText, inputType, placeholder, value, onChange, 
   if (inputType === 'textarea') { el = document.createElement('textarea'); }
   else { el = document.createElement('input'); el.type = inputType; }
   el.placeholder = placeholder;
-  if (listId) { el.setAttribute('list', listId); el.setAttribute('inputmode', 'text'); el.autocomplete = 'off'; }
+  el.autocomplete = 'off';
   el.value = value || '';
   el.addEventListener('input', function () { onChange(el.value); });
   wrapper.appendChild(lbl);
@@ -394,8 +457,31 @@ function removeTree(id) {
 function handlePhotos(event, owner, fromCamera) {
   var files = Array.prototype.slice.call(event.target.files || []);
   event.target.value = '';
-  if (!files.length) return;
-  var autoSave = fromCamera && !IS_IOS && $('s_autoSave').checked;
+  addPhotoBlobs(files, owner, fromCamera && !IS_IOS && !IS_NATIVE && $('s_autoSave').checked);
+}
+
+// Native: camera saves the original straight to the phone gallery
+function nativeTakePhoto(owner) {
+  NCamera.takePhoto({ quality: 85, saveToGallery: true, correctOrientation: true })
+    .then(function (r) { return mediaToBlobs([r]); })
+    .then(function (blobs) { addPhotoBlobs(blobs, owner, false); })
+    .catch(function (e) { if (!/cancel/i.test(String(e && e.message))) showToast('⚠️ ' + (e && e.message || 'שגיאת מצלמה')); });
+}
+function nativePickPhotos(owner) {
+  NCamera.chooseFromGallery({ mediaType: 0, allowMultipleSelection: true })
+    .then(function (r) { return mediaToBlobs((r && r.results) || []); })
+    .then(function (blobs) { addPhotoBlobs(blobs, owner, false); })
+    .catch(function (e) { if (!/cancel/i.test(String(e && e.message))) showToast('⚠️ ' + (e && e.message || 'שגיאה בבחירת תמונות')); });
+}
+function mediaToBlobs(results) {
+  return Promise.all(results.map(function (m) {
+    var src = m.webPath || (m.uri && window.Capacitor.convertFileSrc(m.uri));
+    return fetch(src).then(function (r) { return r.blob(); });
+  }));
+}
+
+function addPhotoBlobs(files, owner, autoSave) {
+  if (!files || !files.length) return;
   var added = [];
   var chain = Promise.resolve();
   files.forEach(function (file) {
@@ -546,6 +632,7 @@ function photoFile(p) {
 function savePhotosToPhone(list) {
   if (!list.length) { showToast('לא נבחרו תמונות'); return; }
   var files = list.map(photoFile);
+  if (IS_NATIVE) { nativeShareFiles(files, 'שמירת תמונות'); return; }
   if (IS_IOS && canShareFiles(files)) {
     navigator.share({ files: files }).catch(function () {});
   } else {
@@ -559,8 +646,15 @@ function canShareFiles(files) {
   catch (e) { return false; }
 }
 
+function nativeShareFiles(files, title) {
+  return Promise.all(files.map(function (f) { return nativeCacheFile(f, f.name); }))
+    .then(function (uris) { return NShare.share({ title: title || '', dialogTitle: title || 'שיתוף', files: uris }); })
+    .catch(function (e) { if (!/cancel/i.test(String(e && e.message))) showToast('⚠️ השיתוף נכשל: ' + (e && e.message || '')); });
+}
+
 function shareFiles(files, title) {
   if (!files.length) { showToast('לא נבחר שום דבר לשליחה'); return; }
+  if (IS_NATIVE) return nativeShareFiles(files, title);
   if (canShareFiles(files)) {
     navigator.share({ files: files, title: title || '' }).catch(function (e) {
       if (e && e.name !== 'AbortError') { console.error(e); showToast('השיתוף נכשל — נסה "הורד"'); }
@@ -608,57 +702,45 @@ function buildSummary() {
   });
 }
 
-function renderShareSection() {
-  var grid = $('sharePhotoGrid');
-  grid.innerHTML = '';
-  $('shareReportRow').style.display = lastReport ? 'flex' : 'none';
-  $('shareReportName').textContent = lastReport ? lastReport.filename + '.docx' : '';
-  if (!photos.length) {
-    grid.innerHTML = '<div class="pt-empty">אין תמונות בדוח</div>';
-  }
-  photos.forEach(function (p) {
-    var lab = document.createElement('label');
-    lab.className = 'share-item';
-    var cb = document.createElement('input');
-    cb.type = 'checkbox'; cb.className = 'share-cb'; cb.dataset.id = p.id;
-    var img = document.createElement('img');
-    img.src = rawDataUrl(p.small);
-    var cap = document.createElement('span');
-    cap.textContent = photoLabel(p);
-    lab.appendChild(cb); lab.appendChild(img); lab.appendChild(cap);
-    grid.appendChild(lab);
-  });
-  $('shareCard').style.display = (lastReport || photos.length) ? 'block' : 'none';
-}
-
-function selectedSharePhotos() {
-  var ids = {};
-  Array.prototype.forEach.call(document.querySelectorAll('.share-cb:checked'), function (cb) { ids[cb.dataset.id] = true; });
-  return photos.filter(function (p) { return ids[p.id]; });
-}
-function toggleAllShare() {
-  var cbs = document.querySelectorAll('.share-cb');
-  var anyOff = Array.prototype.some.call(cbs, function (c) { return !c.checked; });
-  Array.prototype.forEach.call(cbs, function (c) { c.checked = anyOff; });
-}
-function collectShareFiles() {
-  var files = [];
-  if (lastReport && $('shareIncludeReport').checked) files.push(reportFile());
-  selectedSharePhotos().forEach(function (p) { files.push(photoFile(p)); });
-  return files;
-}
-function doShare() { shareFiles(collectShareFiles(), lastReport ? lastReport.filename : 'דוח פיקוח'); }
-function doDownloadSelected() {
-  var f = collectShareFiles();
-  if (!f.length) { showToast('לא נבחר שום דבר'); return; }
-  downloadFiles(f);
-}
-function saveAllPhotos() { savePhotosToPhone(photos.slice()); }
-function saveSelectedPhotos() { savePhotosToPhone(selectedSharePhotos()); }
-
 function reportFile() {
   return new File([lastReport.blob], lastReport.filename + '.docx',
     { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+}
+
+// Two final actions: save the Word report on the phone, or share it.
+function saveReport() { withReport('save', function () {
+  var f = reportFile();
+  if (IS_NATIVE) {
+    return blobToBase64(f).then(function (b64) {
+      return NFs.writeFile({ path: 'AgroReport/' + f.name, data: b64, directory: 'DOCUMENTS', recursive: true });
+    }).then(function () {
+      showToast('✅ הדוח נשמר בטלפון: Documents/AgroReport');
+    }).catch(function (e) {
+      console.error(e);
+      showToast('לא ניתן לשמור בתיקייה — בחר "שמור" בחלון שייפתח');
+      return nativeShareFiles([f], 'שמירת הדוח');
+    });
+  }
+  downloadFiles([f]);
+  showToast('✅ הדוח נשמר בהורדות (Downloads)');
+}); }
+
+function shareReport() { withReport('share', function () {
+  var f = reportFile();
+  if (IS_NATIVE) return nativeShareFiles([f], f.name);
+  if (canShareFiles([f])) {
+    return navigator.share({ files: [f], title: lastReport.filename }).catch(function (e) {
+      if (e && e.name === 'AbortError') return;
+      webShareFallback(f);
+    });
+  }
+  webShareFallback(f);
+}); }
+
+// Chrome on Android (website, not the app) can't share Word files directly
+function webShareFallback(f) {
+  downloadFiles([f]);
+  showValidationAlert('הדפדפן לא מאפשר לשתף קובץ Word ישירות, ולכן הדוח נשמר בהורדות.\n\nלשליחה בוואטסאפ: 📎 ← מסמך ← הקובץ יופיע ראשון ברשימה.\n\nבאפליקציית האנדרואיד השיתוף עובד ישירות.', 'הדוח נשמר');
 }
 
 function newReport() {
@@ -736,14 +818,15 @@ function confirmDialog(msg, okText, onOk) {
   document.body.appendChild(overlay);
 }
 
-function showValidationAlert(msg) {
+function showValidationAlert(msg, titleText) {
   var overlay = document.createElement('div');
   overlay.className = 'modal-bg';
   var box = document.createElement('div');
   box.className = 'modal-box';
   var title = document.createElement('div');
   title.className = 'modal-title';
-  title.textContent = '⚠️ לא ניתן ליצור דוח';
+  title.textContent = titleText ? 'ℹ️ ' + titleText : '⚠️ לא ניתן ליצור דוח';
+  if (titleText) title.style.color = 'var(--gm)';
   var body = document.createElement('div');
   body.className = 'modal-body';
   body.textContent = msg;
@@ -759,14 +842,6 @@ function showValidationAlert(msg) {
 // ─────────────────────────────────────────
 // WORD GENERATION (same layout as the original report)
 // ─────────────────────────────────────────
-var SAVE_BTN_HTML = null;
-
-function resetSaveBtn() {
-  var btn = $('saveBtn');
-  btn.disabled = false;
-  btn.innerHTML = SAVE_BTN_HTML;
-}
-
 function patchHeaderXml(xml) {
   xml = xml.replace(/<w:pPr>/g, '<w:pPr><w:jc w:val="right"/>');
   xml = xml.replace(/(<w:p[^>]*>)(?!<w:pPr>)/g, '$1<w:pPr><w:jc w:val="right"/></w:pPr>');
@@ -834,7 +909,9 @@ function b64ToBytes(b64) {
   return arr;
 }
 
-function generateReport() {
+var busy = false;
+function withReport(kind, action) {
+  if (busy) return;
   if (typeof docx === 'undefined') { showToast('שגיאה: ספריית docx לא נטענה'); return; }
   var errors = [];
   if (!$('f_project').value.trim()) errors.push('שם פרויקט');
@@ -843,30 +920,29 @@ function generateReport() {
   if (!$('f_purpose').value.trim()) errors.push('מטרת סיור');
   if (errors.length) { showValidationAlert('שדות חובה חסרים:\n• ' + errors.join('\n• ')); return; }
 
-  var btn = $('saveBtn');
-  if (!SAVE_BTN_HTML) SAVE_BTN_HTML = btn.innerHTML;
-  btn.disabled = true;
-  btn.textContent = 'מייצר דוח...';
+  busy = true;
+  var btn = $(kind === 'save' ? 'saveBtn' : 'shareBtn');
+  var html = btn.innerHTML;
+  document.querySelectorAll('.final-btn').forEach(function (b) { b.disabled = true; });
+  btn.textContent = 'מכין דוח...';
+  function done() {
+    busy = false;
+    btn.innerHTML = html;
+    document.querySelectorAll('.final-btn').forEach(function (b) { b.disabled = false; });
+  }
   setTimeout(function () {
-    try {
-      buildDocx().then(function (res) {
-        lastReport = res;
-        resetSaveBtn();
-        renderShareSection();
-        $('shareIncludeReport').checked = true;
-        showToast('✅ הדוח מוכן — בחר מה לשלוח');
-        $('shareCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }).catch(function (e) {
-        console.error(e);
-        showValidationAlert('שגיאה ביצירת הדוח: ' + (e.message || 'אנא נסה שוב'));
-        resetSaveBtn();
-      });
-    } catch (e) {
+    var p;
+    try { p = buildDocx(); } catch (e) { p = Promise.reject(e); }
+    p.then(function (res) {
+      lastReport = res;
+      done();
+      return action();
+    }).catch(function (e) {
       console.error(e);
-      showValidationAlert('שגיאה ביצירת הדוח: ' + (e.message || 'אנא נסה שוב'));
-      resetSaveBtn();
-    }
-  }, 60);
+      done();
+      showValidationAlert('שגיאה ביצירת הדוח: ' + (e && e.message || 'אנא נסה שוב'));
+    });
+  }, 50);
 }
 
 function parseMarkdownBullets(text) {
@@ -1061,7 +1137,7 @@ function attachAutosaveListeners() {
   document.title = title;
 })();
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+if ('serviceWorker' in navigator && location.protocol !== 'file:' && !IS_NATIVE) {
   window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
 }
 
