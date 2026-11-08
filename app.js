@@ -1,7 +1,7 @@
 // ═════════════════════════════════════════
 // AGRO REPORT — אפליקציית דוח פיקוח
 // ═════════════════════════════════════════
-var APP_VERSION = '2.1.1';
+var APP_VERSION = '2.2.0';
 
 // ─────────────────────────────────────────
 // STATE
@@ -646,10 +646,28 @@ function canShareFiles(files) {
   catch (e) { return false; }
 }
 
+function isCancel(e) { return /cancel/i.test(String(e && (e.message || e))); }
 function nativeShareFiles(files, title) {
-  return Promise.all(files.map(function (f) { return nativeCacheFile(f, f.name); }))
-    .then(function (uris) { return NShare.share({ title: title || '', dialogTitle: title || 'שיתוף', files: uris }); })
-    .catch(function (e) { if (!/cancel/i.test(String(e && e.message))) showToast('⚠️ השיתוף נכשל: ' + (e && e.message || '')); });
+  function attempt(asciiNames) {
+    return Promise.all(files.map(function (f, i) {
+      var name = f.name;
+      if (asciiNames) {
+        var ext = (f.name.match(/\.[a-z0-9]+$/i) || [''])[0];
+        name = 'agro-report-' + $('f_date').value.replace(/\//g, '') + (files.length > 1 ? '-' + (i + 1) : '') + ext;
+      }
+      return nativeCacheFile(f, name);
+    })).then(function (uris) {
+      return NShare.share({ title: title || '', dialogTitle: 'שיתוף', files: uris });
+    });
+  }
+  return attempt(false).catch(function (e) {
+    if (isCancel(e)) return;
+    console.error('share failed, retrying with plain name', e);
+    return attempt(true).catch(function (e2) {
+      if (isCancel(e2)) return;
+      showValidationAlert('השיתוף נכשל.\n\nפרטי השגיאה (צלם מסך ושלח):\n' + (e2 && (e2.message || e2)) + '\n' + (e && (e.message || e)), 'שגיאה בשיתוף');
+    });
+  });
 }
 
 function shareFiles(files, title) {
@@ -842,28 +860,48 @@ function showValidationAlert(msg, titleText) {
 // ─────────────────────────────────────────
 // WORD GENERATION (same layout as the original report)
 // ─────────────────────────────────────────
+// ── RTL post-processing ──
+// In a right-to-left (bidi) paragraph Word treats jc="right" as the END of the line (= left side),
+// so body paragraphs carry only <w:bidi/> (which aligns them to the right) and no "right" jc.
+// Images keep jc="center".
+function addBidi(ppr) {
+  if (ppr.indexOf('<w:bidi/>') >= 0) return ppr;
+  // schema order: bidi comes before spacing / ind / jc / rPr
+  var m = ppr.match(/<w:(spacing|ind|contextualSpacing|jc|textDirection|outlineLvl|rPr)\b/);
+  if (m) return ppr.replace(m[0], '<w:bidi/>' + m[0]);
+  return ppr.replace('</w:pPr>', '<w:bidi/></w:pPr>');
+}
+function addRtlRun(rpr) {
+  if (rpr.indexOf('<w:rtl/>') >= 0) return rpr;
+  return rpr.replace('</w:rPr>', '<w:rtl/></w:rPr>');
+}
 function patchHeaderXml(xml) {
-  xml = xml.replace(/<w:pPr>/g, '<w:pPr><w:jc w:val="right"/>');
-  xml = xml.replace(/(<w:p[^>]*>)(?!<w:pPr>)/g, '$1<w:pPr><w:jc w:val="right"/></w:pPr>');
-  return xml;
+  // header (logo) follows the same rule: bidi paragraph = aligned to the right
+  return patchXmlRtl(xml);
 }
 function patchStylesRtl(xml) {
-  xml = xml.replace(/<w:pPr>/g, '<w:pPr><w:bidi/><w:jc w:val="right"/>');
-  xml = xml.replace(/<w:rPr>/g, '<w:rPr><w:rtl/>');
+  xml = xml.replace(/<w:pPr>[\s\S]*?<\/w:pPr>/g, function (p) {
+    return addBidi(p.replace(/<w:jc w:val="(right|left)"\/>/g, ''));
+  });
+  xml = xml.replace(/<w:rPr>[\s\S]*?<\/w:rPr>/g, addRtlRun);
   return xml;
 }
 function patchXmlRtl(xml) {
-  xml = xml.replace(/<w:pPr>/g, '<w:pPr><w:bidi/><w:jc w:val="right"/>');
-  xml = xml.replace(/(<w:p[ >][^]*?)(<w:r[ >]|<w:bookmarkStart|<\/w:p>)/g, function (m, before, after) {
-    if (before.indexOf('<w:pPr>') >= 0) return m;
-    return before + '<w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr>' + after;
+  // paragraphs with properties: drop physical right/left alignment, make sure bidi is set
+  xml = xml.replace(/<w:pPr>[\s\S]*?<\/w:pPr>/g, function (p) {
+    if (p.indexOf('<w:sectPr') >= 0) return p;
+    return addBidi(p.replace(/<w:jc w:val="(right|left)"\/>/g, ''));
   });
-  xml = xml.replace(/<w:rPr>/g, '<w:rPr><w:rtl/>');
-  xml = xml.replace(/(<w:r>|<w:r )([^]*?)(<w:t[ >])/g, function (m, open, mid, t) {
-    if (mid.indexOf('<w:rPr>') >= 0) return m;
-    return open + mid + '<w:rPr><w:rtl/></w:rPr>' + t;
+  // paragraphs without properties
+  xml = xml.replace(/(<w:p\b[^>]*>)(?!<w:pPr>)/g, '$1<w:pPr><w:bidi/></w:pPr>');
+  // runs: rtl flag
+  xml = xml.replace(/<w:rPr>[\s\S]*?<\/w:rPr>/g, addRtlRun);
+  xml = xml.replace(/<w:r>(?!<w:rPr>)/g, '<w:r><w:rPr><w:rtl/></w:rPr>');
+  // section: right-to-left page
+  xml = xml.replace(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/g, function (sp) {
+    if (sp.indexOf('<w:bidi/>') >= 0) return sp;
+    return sp.indexOf('<w:docGrid') >= 0 ? sp.replace('<w:docGrid', '<w:bidi/><w:docGrid') : sp.replace('</w:sectPr>', '<w:bidi/></w:sectPr>');
   });
-  xml = xml.replace(/(<w:sectPr\b[^>]*>)/g, '$1<w:bidi/>');
   return xml;
 }
 
@@ -952,12 +990,12 @@ function parseMarkdownBullets(text) {
     if (/^[•\-\*]/.test(trimmed)) {
       paras.push(new D.Paragraph({
         children: [new D.TextRun({ text: trimmed.replace(/^[•\-\*]\s*/, ''), font: 'David', size: 24, rightToLeft: true })],
-        bullet: { level: 0 }, bidirectional: true, alignment: D.AlignmentType.RIGHT, style: 'Normal'
+        bullet: { level: 0 }, bidirectional: true, style: 'Normal'
       }));
     } else if (trimmed) {
       paras.push(new D.Paragraph({
         children: [new D.TextRun({ text: trimmed, font: 'David', size: 24, rightToLeft: true })],
-        bidirectional: true, alignment: D.AlignmentType.RIGHT, spacing: { after: 80 }
+        bidirectional: true, spacing: { after: 80 }
       }));
     } else {
       paras.push(new D.Paragraph({ children: [new D.TextRun({ text: '' })] }));
@@ -989,7 +1027,7 @@ function buildDocx() {
     return new D.Paragraph({
       children: [new D.TextRun({ text: text, font: 'David', size: opts.size || 24, bold: opts.bold || false,
                                  color: opts.color || '000000', rightToLeft: true })],
-      alignment: D.AlignmentType.RIGHT, bidirectional: true,
+      bidirectional: true,
       spacing: { after: opts.spaceAfter !== undefined ? opts.spaceAfter : 100 },
       rightTabStop: D.TabStopPosition.MAX
     });
@@ -997,7 +1035,7 @@ function buildDocx() {
   function sectionTitle(text) {
     return new D.Paragraph({
       children: [new D.TextRun({ text: text, font: 'David', size: 28, bold: true, color: '1a3c2e', rightToLeft: true })],
-      alignment: D.AlignmentType.RIGHT, bidirectional: true, spacing: { before: 200, after: 120 },
+      bidirectional: true, spacing: { before: 200, after: 120 },
       border: { bottom: { color: 'AAAAAA', style: D.BorderStyle.SINGLE, size: 6 } }
     });
   }
@@ -1020,7 +1058,7 @@ function buildDocx() {
   children.push(blank());
   children.push(new D.Paragraph({
     children: [new D.TextRun({ text: 'הנדון: ' + (purpose || '—'), font: 'David', size: 26, bold: true, rightToLeft: true })],
-    alignment: D.AlignmentType.RIGHT, bidirectional: true, spacing: { after: 160 }
+    bidirectional: true, spacing: { after: 160 }
   }));
   if (project) children.push(rtlPara('פרויקט: ' + project));
   children.push(blank());
@@ -1059,7 +1097,7 @@ function buildDocx() {
   if (trees.length) {
     children.push(new D.Paragraph({
       children: [new D.TextRun({ text: 'פירוט עצים שנסקרו', font: 'David', size: 32, bold: true, color: '1a3c2e', rightToLeft: true })],
-      alignment: D.AlignmentType.RIGHT, bidirectional: true, spacing: { before: 300, after: 200 }
+      bidirectional: true, spacing: { before: 300, after: 200 }
     }));
     trees.forEach(function (tree) {
       children.push(sectionTitle('עץ ' + tree.num + (tree.type ? ' — ' + tree.type : '')));
@@ -1074,7 +1112,7 @@ function buildDocx() {
   var doc = new D.Document({
     styles: { default: { document: {
       run: { font: 'David', size: 24, rightToLeft: true },
-      paragraph: { alignment: D.AlignmentType.RIGHT, bidirectional: true }
+      paragraph: { bidirectional: true }
     } } },
     sections: [{
       properties: { page: { margin: { top: 1800, bottom: 1440, right: 1134, left: 1134 } }, bidi: true },

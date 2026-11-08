@@ -1,6 +1,6 @@
 {
   "name": "agro-report",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "private": true,
   "description": "AGRO REPORT — אפליקציית דוח פיקוח עצים (אתר + אפליקציית אנדרואיד)",
   "scripts": {
