@@ -1,7 +1,7 @@
 // ═════════════════════════════════════════
 // AGRO REPORT — אפליקציית דוח פיקוח
 // ═════════════════════════════════════════
-var APP_VERSION = '2.2.0';
+var APP_VERSION = '2.3.0';
 
 // ─────────────────────────────────────────
 // STATE
@@ -756,9 +756,11 @@ function shareReport() { withReport('share', function () {
 }); }
 
 // Chrome on Android (website, not the app) can't share Word files directly
+var APK_URL = 'https://github.com/Mickeyag/agro-report/releases/latest/download/agro-report.apk';
 function webShareFallback(f) {
   downloadFiles([f]);
-  showValidationAlert('הדפדפן לא מאפשר לשתף קובץ Word ישירות, ולכן הדוח נשמר בהורדות.\n\nלשליחה בוואטסאפ: 📎 ← מסמך ← הקובץ יופיע ראשון ברשימה.\n\nבאפליקציית האנדרואיד השיתוף עובד ישירות.', 'הדוח נשמר');
+  showValidationAlert('אתה באתר (בדפדפן), ולא באפליקציה. הדפדפן לא מאפשר לשתף קובץ Word, ולכן הדוח נשמר בהורדות.\n\nלשליחה בוואטסאפ: 📎 ← מסמך ← הקובץ יופיע ראשון ברשימה.\n\nבאפליקציית האנדרואיד "שתף" שולח את הדוח ישירות.', 'הדוח נשמר',
+    /Android/i.test(navigator.userAgent) ? { text: '📲 הורד את אפליקציית האנדרואיד', href: APK_URL } : null);
 }
 
 function newReport() {
@@ -836,7 +838,7 @@ function confirmDialog(msg, okText, onOk) {
   document.body.appendChild(overlay);
 }
 
-function showValidationAlert(msg, titleText) {
+function showValidationAlert(msg, titleText, link) {
   var overlay = document.createElement('div');
   overlay.className = 'modal-bg';
   var box = document.createElement('div');
@@ -852,7 +854,15 @@ function showValidationAlert(msg, titleText) {
   btn.className = 'btn btn-primary btn-full';
   btn.textContent = 'הבנתי';
   btn.onclick = function () { overlay.remove(); };
-  box.appendChild(title); box.appendChild(body); box.appendChild(btn);
+  box.appendChild(title); box.appendChild(body);
+  if (link) {
+    var a = document.createElement('a');
+    a.className = 'btn btn-outline btn-full';
+    a.style.textDecoration = 'none'; a.style.marginBottom = '8px';
+    a.href = link.href; a.textContent = link.text;
+    box.appendChild(a);
+  }
+  box.appendChild(btn);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
@@ -1004,116 +1014,181 @@ function parseMarkdownBullets(text) {
   return paras;
 }
 
+// Hebrew calendar date in the letter's style, e.g. י"ז חשון, תשפ"ז
+function hebrewNumber(n) {
+  var ones = ['', 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'];
+  var tens = ['', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ'];
+  var hund = ['', 'ק', 'ר', 'ש', 'ת', 'תק', 'תר', 'תש', 'תת', 'תתק'];
+  var s = hund[Math.floor(n / 100)] || '';
+  var r = n % 100;
+  if (r === 15) s += 'טו';
+  else if (r === 16) s += 'טז';
+  else s += tens[Math.floor(r / 10)] + ones[r % 10];
+  return s.length > 1 ? s.slice(0, -1) + '"' + s.slice(-1) : s + "'";
+}
+function hebrewDate(d) {
+  try {
+    var parts = new Intl.DateTimeFormat('he-u-ca-hebrew', { day: 'numeric', month: 'long', year: 'numeric' }).formatToParts(d);
+    var get = function (t) { var p = parts.filter(function (x) { return x.type === t; })[0]; return p ? p.value : ''; };
+    var day = parseInt(get('day'), 10), year = parseInt(get('year'), 10) % 1000;
+    var month = get('month').replace(/^ב/, '').replace('חשוון', 'חשון');
+    if (!day || !year) return '';
+    return hebrewNumber(day) + ' ' + month + ', ' + hebrewNumber(year);
+  } catch (e) { return ''; }
+}
+function parseDmy(s) {
+  var m = String(s).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  return m ? new Date(+m[3], +m[2] - 1, +m[1]) : new Date();
+}
+function linesOf(text) {
+  return String(text || '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+}
+
+// Report layout follows the office letter template (letterhead banner, date box, הנדון, sections, signature)
 function buildDocx() {
   var D = docx;
-  var date = $('f_date').value, project = $('f_project').value, recipient = $('f_recipient').value,
-      company = $('f_company').value, purpose = $('f_purpose').value, inspector = $('f_inspector').value,
-      notes = $('f_notes').value, instructions = $('f_instructions').value;
-  var ccList = [$('f_cc1').value, $('f_cc2').value, $('f_cc3').value].filter(function (c) { return c && c.trim(); });
+  var date = $('f_date').value, project = $('f_project').value.trim(), recipient = $('f_recipient').value.trim(),
+      role = $('f_role').value.trim(), company = $('f_company').value.trim(), purpose = $('f_purpose').value.trim(),
+      inspector = $('f_inspector').value.trim(), notes = $('f_notes').value, instructions = $('f_instructions').value,
+      attendees = $('f_attendees').value;
+  var ccList = linesOf($('f_cc').value);
   var rawFilename = $('f_filename').value.trim();
-  var filename = rawFilename || [date.replace(/\//g, ''), project.trim(), purpose.trim()].filter(Boolean).join('_');
+  var filename = rawFilename || [project, purpose].filter(Boolean).join('_') || ('דוח_' + date.replace(/\//g, ''));
   filename = filename.replace(/[\\\/:*?"<>|]+/g, '-');
 
-  var logoBytes = b64ToBytes(LOGO_B64);
-  var header = new D.Header({ children: [
-    new D.Paragraph({ children: [new D.ImageRun({ data: logoBytes, type: 'png', transformation: { width: 240, height: 78 } })],
-      alignment: D.AlignmentType.RIGHT, spacing: { before: 0, after: 40 } }),
-    new D.Paragraph({ children: [new D.TextRun({ text: '' })],
-      border: { bottom: { color: 'AAAAAA', style: D.BorderStyle.SINGLE, size: 12 } }, spacing: { before: 0, after: 100 } })
-  ] });
-
-  function rtlPara(text, opts) {
-    opts = opts || {};
-    return new D.Paragraph({
-      children: [new D.TextRun({ text: text, font: 'David', size: opts.size || 24, bold: opts.bold || false,
-                                 color: opts.color || '000000', rightToLeft: true })],
-      bidirectional: true,
-      spacing: { after: opts.spaceAfter !== undefined ? opts.spaceAfter : 100 },
-      rightTabStop: D.TabStopPosition.MAX
-    });
+  var GREEN = '1A3C2E';
+  function run(text, o) {
+    o = o || {};
+    return new D.TextRun({ text: text, font: 'David', size: o.size || 24, bold: !!o.bold, rightToLeft: true,
+      color: o.color || '000000', underline: o.underline ? { type: D.UnderlineType.SINGLE } : undefined });
   }
-  function sectionTitle(text) {
-    return new D.Paragraph({
-      children: [new D.TextRun({ text: text, font: 'David', size: 28, bold: true, color: '1a3c2e', rightToLeft: true })],
-      bidirectional: true, spacing: { before: 200, after: 120 },
-      border: { bottom: { color: 'AAAAAA', style: D.BorderStyle.SINGLE, size: 6 } }
-    });
+  function para(text, o) {
+    o = o || {};
+    return new D.Paragraph({ children: [run(text, o)], bidirectional: true,
+      alignment: o.align, indent: o.indent, spacing: { before: o.before || 0, after: o.after !== undefined ? o.after : 100 } });
   }
-  function blank() { return new D.Paragraph({ children: [new D.TextRun({ text: '' })] }); }
+  function blank() { return new D.Paragraph({ children: [run('')], bidirectional: true }); }
+  function mainTitle(text, withRule) {
+    return new D.Paragraph({ children: [run(text, { size: 32, bold: true, color: GREEN, underline: true })], bidirectional: true,
+      spacing: { before: withRule ? 200 : 300, after: withRule ? 120 : 200 },
+      border: withRule ? { bottom: { color: 'AAAAAA', style: D.BorderStyle.SINGLE, size: 6 } } : undefined });
+  }
+  function subTitle(text) {
+    return new D.Paragraph({ children: [run(text, { size: 28, bold: true, color: GREEN })], bidirectional: true,
+      spacing: { before: 200, after: 120 }, border: { bottom: { color: 'AAAAAA', style: D.BorderStyle.SINGLE, size: 6 } } });
+  }
+  function textBlock(text) {
+    var out = [];
+    String(text || '').split('\n').forEach(function (line) {
+      var t = line.trim();
+      if (/^[•\-\*]/.test(t)) {
+        out.push(new D.Paragraph({ children: [run(t.replace(/^[•\-\*]\s*/, ''))], bullet: { level: 0 }, bidirectional: true, spacing: { after: 80 } }));
+      } else if (t) {
+        out.push(new D.Paragraph({ children: [run(t)], bidirectional: true, alignment: D.AlignmentType.BOTH, spacing: { after: 80 } }));
+      } else {
+        out.push(blank());
+      }
+    });
+    return out;
+  }
   function imagePara(small, after) {
     var sz = calcImgSize(small);
     return new D.Paragraph({
-      children: [new D.ImageRun({ data: b64ToBytes(rawDataUrl(small).split(',')[1]), type: 'jpg',
-                                  transformation: { width: sz.w, height: sz.h } })],
+      children: [new D.ImageRun({ data: b64ToBytes(rawDataUrl(small).split(',')[1]), type: 'jpg', transformation: { width: sz.w, height: sz.h } })],
       alignment: D.AlignmentType.CENTER, spacing: { after: after }
     });
   }
+  var NOB = { style: D.BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+  var noBorders = { top: NOB, bottom: NOB, left: NOB, right: NOB, insideHorizontal: NOB, insideVertical: NOB };
+
+  // ── Letterhead (header on every page): full-width banner + grey rule ──
+  var bannerW = 640, bannerH = Math.round(640 * (typeof LOGO_H !== 'undefined' ? LOGO_H / LOGO_W : 109 / 973));
+  var header = new D.Header({ children: [
+    new D.Paragraph({ children: [new D.ImageRun({ data: b64ToBytes(LOGO_B64), type: 'png', transformation: { width: bannerW, height: bannerH } })],
+      alignment: D.AlignmentType.CENTER, spacing: { after: 40 } }),
+    new D.Paragraph({ children: [], border: { bottom: { color: 'AAAAAA', style: D.BorderStyle.SINGLE, size: 12 } }, spacing: { after: 100 } })
+  ] });
 
   var children = [];
-  children.push(rtlPara('לכבוד,'));
-  children.push(rtlPara(recipient || '—', { bold: true }));
-  if (company) children.push(rtlPara(company));
-  children.push(blank());
-  children.push(rtlPara('תאריך: ' + date, { size: 22, color: '555555' }));
-  children.push(blank());
-  children.push(new D.Paragraph({
-    children: [new D.TextRun({ text: 'הנדון: ' + (purpose || '—'), font: 'David', size: 26, bold: true, rightToLeft: true })],
-    bidirectional: true, spacing: { after: 160 }
+
+  // ── Addressee (right) + dates (left) ──
+  var toLines = [para('לכבוד,')];
+  if (recipient) toLines.push(para(recipient, { bold: true }));
+  if (role) toLines.push(para(role));
+  if (company) toLines.push(para(company));
+  var d0 = parseDmy(date), hd = hebrewDate(d0);
+  var dateLines = [para(date, { align: D.AlignmentType.END, bold: true })];
+  if (hd) dateLines.push(para(hd, { align: D.AlignmentType.END }));
+  children.push(new D.Table({
+    visuallyRightToLeft: true, borders: noBorders,
+    width: { size: 9638, type: D.WidthType.DXA }, columnWidths: [6638, 3000],
+    rows: [new D.TableRow({ children: [
+      new D.TableCell({ children: toLines, borders: noBorders, width: { size: 6638, type: D.WidthType.DXA } }),
+      new D.TableCell({ children: dateLines, borders: noBorders, width: { size: 3000, type: D.WidthType.DXA } })
+    ] })]
   }));
-  if (project) children.push(rtlPara('פרויקט: ' + project));
+  children.push(blank(), blank());
+
+  // ── הנדון ──
+  var subject = [purpose, project].filter(Boolean).join(', ');
+  children.push(para('הנדון: ' + (subject || '—'), { size: 26, bold: true, underline: true, align: D.AlignmentType.CENTER, after: 160 }));
   children.push(blank());
 
-  if (notes && notes.trim()) {
-    children.push(sectionTitle('הערות מהסיור'));
-    parseMarkdownBullets(notes).forEach(function (p) { children.push(p); });
+  // ── Notes (opening text) ──
+  if (notes && notes.trim()) { textBlock(notes).forEach(function (p) { children.push(p); }); children.push(blank()); }
+
+  // ── נוכחים ──
+  var att = linesOf(attendees);
+  if (att.length) {
+    children.push(para('נוכחים:', { underline: true, after: 120 }));
+    att.forEach(function (a) { children.push(para(a, { after: 80 })); });
     children.push(blank());
   }
+
+  // ── הנחיות כלליות + general photos ──
   var np = photosOf('notes');
-  if (np.length) {
-    children.push(sectionTitle('תמונות מהסיור'));
+  var instr = linesOf(instructions);
+  if (instr.length || np.length) {
+    children.push(mainTitle('הנחיות כלליות', true));
+    instr.forEach(function (l) {
+      children.push(new D.Paragraph({ children: [run(l.replace(/^[•\-\*]\s*/, ''))], bullet: { level: 0 }, bidirectional: true, spacing: { after: 60 } }));
+    });
+    if (instr.length) children.push(blank());
     np.forEach(function (p) {
-      children.push(imagePara(p.small, p.caption ? 40 : 120));
-      if (p.caption) children.push(new D.Paragraph({
-        children: [new D.TextRun({ text: p.caption, font: 'David', size: 20, color: '555555', rightToLeft: true })],
-        alignment: D.AlignmentType.CENTER, spacing: { after: 120 }
-      }));
+      children.push(imagePara(p.small, p.caption ? 40 : 160));
+      if (p.caption) children.push(para(p.caption, { size: 20, color: '555555', after: 160, align: D.AlignmentType.CENTER }));
     });
   }
-  if (instructions && instructions.trim()) {
-    children.push(sectionTitle('הנחיות כלליות'));
-    parseMarkdownBullets(instructions).forEach(function (p) { children.push(p); });
-    children.push(blank());
-  }
-  children.push(blank());
-  children.push(rtlPara('בכבוד רב,'));
-  children.push(rtlPara(inspector || '—', { bold: true }));
-  children.push(rtlPara('חנוך בורגר אגרונומים', { size: 22, color: '555555' }));
-  children.push(blank());
-  if (ccList.length) {
-    children.push(sectionTitle('תפוצה'));
-    ccList.forEach(function (cc) { children.push(rtlPara('• ' + cc, { size: 22 })); });
-    children.push(blank());
-  }
+
+  // ── הערות פרטניות (trees) ──
   if (trees.length) {
-    children.push(new D.Paragraph({
-      children: [new D.TextRun({ text: 'פירוט עצים שנסקרו', font: 'David', size: 32, bold: true, color: '1a3c2e', rightToLeft: true })],
-      bidirectional: true, spacing: { before: 300, after: 200 }
-    }));
+    children.push(mainTitle('הערות פרטניות', false));
     trees.forEach(function (tree) {
-      children.push(sectionTitle('עץ ' + tree.num + (tree.type ? ' — ' + tree.type : '')));
-      var s = statusOf(tree.number);
-      if (tree.number) children.push(rtlPara('עץ מספר: ' + tree.number + (s ? '  |  מיועד ל' + s : ''), { size: 22 }));
-      if (tree.note) parseMarkdownBullets(tree.note).forEach(function (p) { children.push(p); });
+      var title = tree.number ? 'עץ ' + tree.number : 'עץ ' + tree.num;
+      if (tree.type) title += ' — ' + tree.type;
+      children.push(subTitle(title));
+      if (tree.note) textBlock(tree.note).forEach(function (p) { children.push(p); });
       photosOf(tree.id).forEach(function (p) { children.push(imagePara(p.small, 120)); });
       children.push(blank());
     });
   }
 
+  // ── תפוצה ──
+  if (ccList.length) {
+    children.push(blank());
+    children.push(para('תפוצה:', { underline: true, after: 120 }));
+    ccList.forEach(function (c) { children.push(para(c, { after: 60 })); });
+  }
+
+  // ── Signature (left side of the page) ──
+  children.push(blank(), blank());
+  var sigIndent = { left: 7000 };
+  children.push(para('בברכה,', { indent: sigIndent }));
+  children.push(para(inspector || '—', { bold: true, indent: sigIndent }));
+  children.push(para('חנוך בורגר אגרונומים בע"מ', { size: 22, color: '555555', indent: sigIndent }));
+
   var doc = new D.Document({
-    styles: { default: { document: {
-      run: { font: 'David', size: 24, rightToLeft: true },
-      paragraph: { bidirectional: true }
-    } } },
+    styles: { default: { document: { run: { font: 'David', size: 24, rightToLeft: true }, paragraph: { bidirectional: true } } } },
     sections: [{
       properties: { page: { margin: { top: 1800, bottom: 1440, right: 1134, left: 1134 } }, bidi: true },
       headers: { default: header },
@@ -1131,8 +1206,8 @@ function buildDocx() {
 // AUTOSAVE — text in localStorage, photos in IndexedDB
 // ─────────────────────────────────────────
 var AUTOSAVE_KEY = 'agro_report_draft';
-var FORM_FIELDS = ['f_project', 'f_recipient', 'f_company', 'f_purpose', 'f_inspector',
-                   'f_notes', 'f_instructions', 'f_cc1', 'f_cc2', 'f_cc3', 'f_filename'];
+var FORM_FIELDS = ['f_project', 'f_recipient', 'f_role', 'f_company', 'f_purpose', 'f_inspector',
+                   'f_notes', 'f_attendees', 'f_instructions', 'f_cc', 'f_filename'];
 var autosaveTimer = null;
 
 function collectFormData() {
@@ -1147,6 +1222,10 @@ function scheduleSave() {
 }
 function restoreDraft(data) {
   FORM_FIELDS.forEach(function (id) { if (data[id] !== undefined && $(id)) $(id).value = data[id]; });
+  // drafts from older versions had three separate distribution fields
+  if (data.f_cc === undefined && (data.f_cc1 || data.f_cc2 || data.f_cc3)) {
+    $('f_cc').value = [data.f_cc1, data.f_cc2, data.f_cc3].filter(Boolean).join('\n');
+  }
   syncProjectSelFromText();
   (data.trees_meta || []).forEach(function (meta) {
     var tree = { id: meta.id, num: meta.num, type: meta.type, number: meta.number, note: meta.note };

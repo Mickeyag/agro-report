@@ -423,12 +423,16 @@ button, .chip { -webkit-tap-highlight-color: transparent; font-family: inherit; 
       <input type="text" id="f_recipient" placeholder="שם הנמען">
     </div>
     <div class="field">
+      <label>תפקיד הנמען</label>
+      <input type="text" id="f_role" placeholder="למשל: מהנדס ביצוע">
+    </div>
+    <div class="field">
       <label>חברה / גוף</label>
       <input type="text" id="f_company" placeholder="שם החברה">
     </div>
     <div class="field">
       <label>מטרת הסיור (הנדון)</label>
-      <input type="text" id="f_purpose" placeholder="למשל: סיור ביקורת עצים">
+      <input type="text" id="f_purpose" placeholder="למשל: סיור פיקוח עליון בעצים">
     </div>
     <div class="field">
       <label>שם המפקח</label>
@@ -468,11 +472,15 @@ button, .chip { -webkit-tap-highlight-color: transparent; font-family: inherit; 
       הערות כלליות
     </div>
     <div class="field">
-      <label>הערות (ניתן להשתמש ב-• לרשימה)</label>
-      <textarea id="f_notes" placeholder="הערות כלליות מהסיור...&#10;• הערה ראשונה&#10;• הערה שנייה"></textarea>
+      <label>פתיח / סיכום הסיור (מופיע מתחת להנדון)</label>
+      <textarea id="f_notes" placeholder="בתאריך ... התבצע סיור פיקוח עליון בעצים..."></textarea>
     </div>
     <div class="field">
-      <label>תמונות הערות</label>
+      <label>נוכחים (שורה לכל נוכח)</label>
+      <textarea id="f_attendees" placeholder="שם, תפקיד, חברה"></textarea>
+    </div>
+    <div class="field">
+      <label>תמונות כלליות (מופיעות תחת "הנחיות כלליות")</label>
       <div style="display:flex;gap:8px;margin-bottom:8px;">
         <button class="btn btn-outline" onclick="triggerPhoto('notesCamera')">📷 צלם</button>
         <button class="btn btn-outline" onclick="triggerPhoto('notesGallery')">🖼 גלריה</button>
@@ -486,10 +494,11 @@ button, .chip { -webkit-tap-highlight-color: transparent; font-family: inherit; 
   <div class="card">
     <div class="card-title">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-      הנחיות להמשך
+      הנחיות כלליות
     </div>
     <div class="field">
-      <textarea id="f_instructions" placeholder="הנחיות כלליות..."></textarea>
+      <label>שורה לכל הנחיה (תופיע כתבליט)</label>
+      <textarea id="f_instructions" placeholder="יש לדאוג להשקיה...&#10;לבצע פרט שימור..."></textarea>
     </div>
   </div>
 
@@ -499,16 +508,8 @@ button, .chip { -webkit-tap-highlight-color: transparent; font-family: inherit; 
       תפוצה
     </div>
     <div class="field">
-      <label>תפוצה 1</label>
-      <input type="text" id="f_cc1" placeholder="שם + תפקיד">
-    </div>
-    <div class="field">
-      <label>תפוצה 2</label>
-      <input type="text" id="f_cc2" placeholder="שם + תפקיד">
-    </div>
-    <div class="field">
-      <label>תפוצה 3</label>
-      <input type="text" id="f_cc3" placeholder="שם + תפקיד">
+      <label>שורה לכל נמען</label>
+      <textarea id="f_cc" placeholder="שם, חברה"></textarea>
     </div>
   </div>
 
