@@ -1,7 +1,8 @@
 // ═════════════════════════════════════════
 // AGRO REPORT — אפליקציית דוח פיקוח
 // ═════════════════════════════════════════
-var APP_VERSION = '2.3.0';
+var APP_VERSION = '2.4.1';
+var APP_UPDATED = '19/11/2026';   // replaced automatically with the build date in the Android app
 
 // ─────────────────────────────────────────
 // STATE
@@ -144,6 +145,7 @@ function init() {
     $('viewerSave').style.display = 'none';   // camera photos are already in the gallery
   }
   $('appVersion').textContent = APP_VERSION + (IS_NATIVE ? ' (אפליקציה)' : ' (אתר)');
+  showUpdatedDate();
 
   if (IS_NATIVE) loadCachedProjects();
   buildProjectSelect();
@@ -170,6 +172,21 @@ function init() {
   });
 
   attachAutosaveListeners();
+}
+
+// Last-update date in Settings. Website: the date the files were last published (server header);
+// app: the date the APK was built.
+function fmtDate(d) {
+  return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+}
+function showUpdatedDate() {
+  $('appUpdated').textContent = APP_UPDATED;
+  if (IS_NATIVE || location.protocol === 'file:' || !window.fetch) return;
+  fetch('app.js', { method: 'HEAD', cache: 'no-store' }).then(function (r) {
+    var lm = r.headers.get('Last-Modified');
+    var d = lm ? new Date(lm) : null;
+    if (d && !isNaN(d)) $('appUpdated').textContent = fmtDate(d);
+  }).catch(function () {});
 }
 
 // ─────────────────────────────────────────
@@ -1041,7 +1058,7 @@ function parseDmy(s) {
   return m ? new Date(+m[3], +m[2] - 1, +m[1]) : new Date();
 }
 function linesOf(text) {
-  return String(text || '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+  return String(text || '').split('\n').map(function (l) { return l.trim().replace(/^[•\-\*]\s*/, ''); }).filter(Boolean);
 }
 
 // Report layout follows the office letter template (letterhead banner, date box, הנדון, sections, signature)
@@ -1101,6 +1118,38 @@ function buildDocx() {
   var NOB = { style: D.BorderStyle.NONE, size: 0, color: 'FFFFFF' };
   var noBorders = { top: NOB, bottom: NOB, left: NOB, right: NOB, insideHorizontal: NOB, insideVertical: NOB };
 
+  // Summary table of all trees at the top of "הערות פרטניות"
+  function treesSummaryTable() {
+    var G = { style: D.BorderStyle.SINGLE, size: 4, color: 'AAAAAA' };
+    var grid = { top: G, bottom: G, left: G, right: G, insideHorizontal: G, insideVertical: G };
+    var widths = [1500, 2300, 5838];   // total 9638 = text width
+    function cell(text, w, o) {
+      o = o || {};
+      return new D.TableCell({
+        width: { size: w, type: D.WidthType.DXA }, borders: grid,
+        shading: o.head ? { fill: 'E8F5E9', type: D.ShadingType.CLEAR, color: 'auto' } : undefined,
+        margins: { top: 60, bottom: 60, left: 100, right: 100 },
+        children: String(text || '').split('\n').map(function (l) {
+          return new D.Paragraph({ children: [run(l.replace(/^[•\-\*]\s*/, ''), { size: 22, bold: !!o.head, color: o.color })],
+            bidirectional: true, alignment: o.center ? D.AlignmentType.CENTER : undefined });
+        })
+      });
+    }
+    var rows = [new D.TableRow({ tableHeader: true, children: [
+      cell('מס׳ עץ', widths[0], { head: true, center: true }), cell('מין העץ', widths[1], { head: true, center: true }),
+      cell('הערה', widths[2], { head: true, center: true })
+    ] })];
+    trees.forEach(function (t) {
+      rows.push(new D.TableRow({ cantSplit: true, children: [
+        cell(t.number || String(t.num), widths[0], { center: true }),
+        cell(t.type || '', widths[1], { center: true }),
+        cell((t.note || '').trim(), widths[2])
+      ] }));
+    });
+    return new D.Table({ visuallyRightToLeft: true, borders: grid, width: { size: 9638, type: D.WidthType.DXA },
+      columnWidths: widths, rows: rows });
+  }
+
   // ── Letterhead (header on every page): full-width banner + grey rule ──
   var bannerW = 640, bannerH = Math.round(640 * (typeof LOGO_H !== 'undefined' ? LOGO_H / LOGO_W : 109 / 973));
   var header = new D.Header({ children: [
@@ -1113,11 +1162,11 @@ function buildDocx() {
 
   // ── Addressee (right) + dates (left) ──
   var toLines = [para('לכבוד,')];
-  if (recipient) toLines.push(para(recipient, { bold: true }));
+  if (recipient) toLines.push(para(recipient));
   if (role) toLines.push(para(role));
   if (company) toLines.push(para(company));
   var d0 = parseDmy(date), hd = hebrewDate(d0);
-  var dateLines = [para(date, { align: D.AlignmentType.END, bold: true })];
+  var dateLines = [para(date, { align: D.AlignmentType.END })];
   if (hd) dateLines.push(para(hd, { align: D.AlignmentType.END }));
   children.push(new D.Table({
     visuallyRightToLeft: true, borders: noBorders,
@@ -1163,6 +1212,8 @@ function buildDocx() {
   // ── הערות פרטניות (trees) ──
   if (trees.length) {
     children.push(mainTitle('הערות פרטניות', false));
+    children.push(treesSummaryTable());
+    children.push(blank());
     trees.forEach(function (tree) {
       var title = tree.number ? 'עץ ' + tree.number : 'עץ ' + tree.num;
       if (tree.type) title += ' — ' + tree.type;
@@ -1184,7 +1235,7 @@ function buildDocx() {
   children.push(blank(), blank());
   var sigIndent = { left: 7000 };
   children.push(para('בברכה,', { indent: sigIndent }));
-  children.push(para(inspector || '—', { bold: true, indent: sigIndent }));
+  children.push(para(inspector || '—', { indent: sigIndent }));
   children.push(para('חנוך בורגר אגרונומים בע"מ', { size: 22, color: '555555', indent: sigIndent }));
 
   var doc = new D.Document({
