@@ -13,6 +13,10 @@ for (const it of items) {
 const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
 const stamp = String(now.getDate()).padStart(2, '0') + '/' + String(now.getMonth() + 1).padStart(2, '0') + '/' + now.getFullYear();
 const appPath = path.join(out, 'app.js');
-fs.writeFileSync(appPath, fs.readFileSync(appPath, 'utf8').replace(/var APP_UPDATED = '[^']*'/, "var APP_UPDATED = '" + stamp + "'"));
+const build = parseInt(process.env.GITHUB_RUN_NUMBER || '0', 10);
+fs.writeFileSync(appPath, fs.readFileSync(appPath, 'utf8')
+  .replace(/var APP_UPDATED = '[^']*'/, "var APP_UPDATED = '" + stamp + "'")
+  .replace(/var APP_BUILD = \d+;/, 'var APP_BUILD = ' + build + ';'));
+console.log('build number:', build);
 console.log('build date:', stamp);
 console.log('www ready:', fs.readdirSync(out).join(', '));

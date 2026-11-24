@@ -1,8 +1,9 @@
 // ═════════════════════════════════════════
 // AGRO REPORT — אפליקציית דוח פיקוח
 // ═════════════════════════════════════════
-var APP_VERSION = '2.4.1';
+var APP_VERSION = '2.5.0';
 var APP_UPDATED = '19/11/2026';   // replaced automatically with the build date in the Android app
+var APP_BUILD = 0;                // replaced automatically with the GitHub build number in the Android app
 
 // ─────────────────────────────────────────
 // STATE
@@ -144,12 +145,13 @@ function init() {
     $('nativeHint').style.display = 'block';
     $('viewerSave').style.display = 'none';   // camera photos are already in the gallery
   }
-  $('appVersion').textContent = APP_VERSION + (IS_NATIVE ? ' (אפליקציה)' : ' (אתר)');
+  $('appVersion').textContent = APP_VERSION + (IS_NATIVE ? ' (אפליקציה' + (APP_BUILD ? ', בנייה ' + APP_BUILD : '') + ')' : ' (אתר)');
   showUpdatedDate();
 
   if (IS_NATIVE) loadCachedProjects();
   buildProjectSelect();
   refreshProjectsFromWeb();
+  if (IS_NATIVE) { $('updateBtn').style.display = 'flex'; setTimeout(function () { checkForUpdate(false); }, 2500); }
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
@@ -774,6 +776,61 @@ function shareReport() { withReport('share', function () {
 
 // Chrome on Android (website, not the app) can't share Word files directly
 var APK_URL = 'https://github.com/Mickeyag/agro-report/releases/latest/download/agro-report.apk';
+var RELEASES_API = 'https://api.github.com/repos/Mickeyag/agro-report/releases/latest';
+
+// ─────────────────────────────────────────
+// UPDATE NOTICE (Android app): compares this build with the latest GitHub release (tag build-N)
+// ─────────────────────────────────────────
+function checkForUpdate(manual) {
+  if (!IS_NATIVE || !window.fetch) return;
+  if (!APP_BUILD) { if (manual) showToast('לא ניתן לבדוק עדכונים בגרסה זו'); return; }
+  if (manual) showToast('בודק עדכונים...');
+  fetch(RELEASES_API, { cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (rel) {
+      var m = rel && String(rel.tag_name || '').match(/build-(\d+)/);
+      if (!m) { if (manual) showToast('לא ניתן לבדוק עדכונים כרגע'); return; }
+      var latest = parseInt(m[1], 10);
+      if (latest <= APP_BUILD) { if (manual) showToast('✅ יש לך את הגרסה האחרונה'); return; }
+      // don't nag: after "אחר כך" ask again only after a day (or when an even newer build appears)
+      var snooze = {};
+      try { snooze = JSON.parse(lsGet('updateSnooze', '{}')) || {}; } catch (e) {}
+      if (!manual && snooze.build === latest && Date.now() - snooze.at < 24 * 3600 * 1000) return;
+      showUpdateDialog(latest);
+    })
+    .catch(function () { if (manual) showToast('אין חיבור לאינטרנט — נסה שוב מאוחר יותר'); });
+}
+
+function showUpdateDialog(latest) {
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-bg';
+  var box = document.createElement('div');
+  box.className = 'modal-box';
+  var title = document.createElement('div');
+  title.className = 'modal-title';
+  title.style.color = 'var(--accent)';
+  title.textContent = '🆕 גרסה חדשה זמינה';
+  var body = document.createElement('div');
+  body.className = 'modal-body';
+  body.textContent = 'יצאה גרסה חדשה של האפליקציה.\n\nלחץ "הורד והתקן", ואחרי שההורדה מסתיימת פתח את הקובץ ובחר "עדכן". הדוחות והתמונות שבאפליקציה נשמרים.';
+  var dl = document.createElement('a');
+  dl.className = 'btn btn-primary btn-full';
+  dl.style.textDecoration = 'none';
+  dl.style.marginBottom = '8px';
+  dl.href = APK_URL;
+  dl.textContent = '⬇️ הורד והתקן';
+  dl.addEventListener('click', function () { setTimeout(function () { overlay.remove(); }, 300); });
+  var later = document.createElement('button');
+  later.className = 'btn btn-outline btn-full';
+  later.textContent = 'אחר כך';
+  later.onclick = function () {
+    lsSet('updateSnooze', JSON.stringify({ build: latest, at: Date.now() }));
+    overlay.remove();
+  };
+  box.appendChild(title); box.appendChild(body); box.appendChild(dl); box.appendChild(later);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
 function webShareFallback(f) {
   downloadFiles([f]);
   showValidationAlert('אתה באתר (בדפדפן), ולא באפליקציה. הדפדפן לא מאפשר לשתף קובץ Word, ולכן הדוח נשמר בהורדות.\n\nלשליחה בוואטסאפ: 📎 ← מסמך ← הקובץ יופיע ראשון ברשימה.\n\nבאפליקציית האנדרואיד "שתף" שולח את הדוח ישירות.', 'הדוח נשמר',
